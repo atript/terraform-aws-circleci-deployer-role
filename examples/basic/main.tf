@@ -9,11 +9,26 @@ terraform {
 }
 
 provider "aws" {
-  region = "eu-central-1"
+  region = var.region
+}
+
+variable "region" {
+  type    = string
+  default = "eu-central-1"
+}
+
+variable "account_id" {
+  description = "AWS account ID where the role lives"
+  type        = string
+}
+
+variable "circleci_org_id" {
+  description = "CircleCI organization UUID"
+  type        = string
 }
 
 variable "circleci_project_id" {
-  description = "Project UUID from CircleCI → Project Settings → Overview"
+  description = "CircleCI project UUID (Project Settings -> Overview)"
   type        = string
 }
 
@@ -32,8 +47,8 @@ module "circleci_deployer" {
   source = "../.."
 
   role_name           = "example-ci"
-  account_id          = "147996971541"
-  circleci_org_id     = "1e51235c-d765-4b7b-bb32-c4cecc927d14"
+  account_id          = var.account_id
+  circleci_org_id     = var.circleci_org_id
   circleci_project_id = var.circleci_project_id
   branch_filter       = "refs/heads/main"
   permissions_policy  = data.aws_iam_policy_document.deploy.json

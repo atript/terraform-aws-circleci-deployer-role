@@ -3,19 +3,16 @@
 Reusable Terraform module that creates an AWS IAM role assumable by a specific CircleCI project via OIDC. Pair it with the `circleci/aws-cli` orb to delete long-lived `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` from CircleCI env vars.
 
 - **Trust policy:** `sts:AssumeRoleWithWebIdentity` against the CircleCI OIDC provider, scoped by org UUID (`:aud`) **and** project UUID (`:sub`). Optionally further scoped to a single git ref.
-- **Permissions:** you supply a JSON policy document; the module attaches it inline.
+- **Permissions:** you supply a JSON policy document; the module attaches it inline. Or omit it and attach permissions separately (managed-policy attachment, etc).
 
 ## Prerequisites
 
-The CircleCI OIDC provider must already exist in the target AWS account. In this org it's bootstrapped here:
+The CircleCI OIDC provider must already be registered in the target AWS account. Bootstrapping is one-time per account — see the [CircleCI docs on OIDC](https://circleci.com/docs/openid-connect-tokens/), or, for atript engineers, the internal **CircleCI OIDC Setup** wiki page for the per-account provider ARNs and which terraform root manages each. _(Internal link not published here.)_
 
-| Account | Provider ARN | Managed in |
-| --- | --- | --- |
-| peekd (`915256449308`) | `arn:aws:iam::915256449308:oidc-provider/oidc.circleci.com/org/1e51235c-d765-4b7b-bb32-c4cecc927d14` | [`pd-common/ci_oidc.tf`](https://github.com/atript/pd-common) |
-| dst (`147996971541`) | `arn:aws:iam::147996971541:oidc-provider/oidc.circleci.com/org/1e51235c-d765-4b7b-bb32-c4cecc927d14` | [`dst-common/ci_oidc.tf`](https://github.com/atript/dst-common) |
-| kwh (`933869273772`) | _not yet — see MI-2452_ | — |
-
-CircleCI org UUID: `1e51235c-d765-4b7b-bb32-c4cecc927d14`.
+You will need:
+- The CircleCI **organization UUID** (CircleCI → Organization Settings → Overview)
+- The CircleCI **project UUID** for the project that will assume the role (Project Settings → Overview)
+- The AWS **account ID** where the role lives
 
 ## Quick start
 
@@ -24,10 +21,10 @@ module "circleci_deployer" {
   source = "git::https://github.com/atript/terraform-aws-circleci-deployer-role.git?ref=<commit-sha>"
 
   role_name           = "myservice-ci"
-  account_id          = "147996971541"
-  circleci_org_id     = "1e51235c-d765-4b7b-bb32-c4cecc927d14"
-  circleci_project_id = "8ef68802-2064-40e5-9f4a-19f38851e5d6" # this project's UUID
-  branch_filter       = "refs/heads/main"                       # optional, recommended for prod
+  account_id          = "<your-aws-account-id>"
+  circleci_org_id     = "<your-circleci-org-uuid>"
+  circleci_project_id = "<your-circleci-project-uuid>"
+  branch_filter       = "refs/heads/main"     # optional, recommended for prod
   permissions_policy  = data.aws_iam_policy_document.deploy.json
 }
 
@@ -36,13 +33,13 @@ output "ci_role_arn" {
 }
 ```
 
-Pin `?ref=` to a commit SHA (or a tag once we cut one). Don't track `main`.
+Pin `?ref=` to a commit SHA. Don't track `main`.
 
 ---
 
 ## Migrating a project from key-based AWS to OIDC
 
-This is the end-to-end path for an existing CircleCI project that today uses static `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars.
+End-to-end path for an existing CircleCI project that today uses static `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars.
 
 ### Step 0 — Find your CircleCI project UUID
 
@@ -50,7 +47,7 @@ CircleCI → your project → **Project Settings → Overview**. Copy the **Proj
 
 ```bash
 curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
-  "https://circleci.com/api/v2/project/gh/atript/<repo>" | jq -r .id
+  "https://circleci.com/api/v2/project/gh/<org>/<repo>" | jq -r .id
 ```
 
 ### Step 1 — Add the role to your project's terraform
@@ -71,7 +68,7 @@ data "aws_iam_policy_document" "deploy" {
   statement {
     sid       = "UpdateLambda"
     actions   = ["lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration", "lambda:GetFunction"]
-    resources = ["arn:aws:lambda:eu-central-1:147996971541:function:myservice-*"]
+    resources = ["arn:aws:lambda:<region>:<account-id>:function:myservice-*"]
   }
 }
 
@@ -79,15 +76,15 @@ module "circleci_deployer" {
   source = "git::https://github.com/atript/terraform-aws-circleci-deployer-role.git?ref=<sha>"
 
   role_name           = "myservice-ci"
-  account_id          = "147996971541"
-  circleci_org_id     = "1e51235c-d765-4b7b-bb32-c4cecc927d14"
-  circleci_project_id = "<your project UUID>"
+  account_id          = "<your-aws-account-id>"
+  circleci_org_id     = "<your-circleci-org-uuid>"
+  circleci_project_id = "<your-circleci-project-uuid>"
   branch_filter       = "refs/heads/main"
   permissions_policy  = data.aws_iam_policy_document.deploy.json
 }
 ```
 
-Apply once with **human creds** (`AWS_PROFILE=dst terraform apply`) — this is the bootstrap. After this, CI assumes the role and runs all subsequent applies itself.
+Apply once with **human creds** (`AWS_PROFILE=<your-profile> terraform apply`) — this is the bootstrap. After this, CI assumes the role and runs all subsequent applies itself.
 
 ### Step 2 — Update `.circleci/config.yml`
 
@@ -106,8 +103,8 @@ jobs:
     steps:
       - checkout
       - aws-cli/setup:
-          role_arn: arn:aws:iam::147996971541:role/myservice-ci
-          region: eu-central-1
+          role_arn: arn:aws:iam::<account-id>:role/myservice-ci
+          region: <region>
           role_session_name: myservice-${CIRCLE_BUILD_NUM}
       - run: aws sts get-caller-identity   # sanity check: should print the role ARN
       - run: ./deploy.sh
@@ -120,7 +117,7 @@ Or, without the orb, manually:
     name: Assume deploy role via OIDC
     command: |
       CREDS=$(aws sts assume-role-with-web-identity \
-        --role-arn arn:aws:iam::147996971541:role/myservice-ci \
+        --role-arn arn:aws:iam::<account-id>:role/myservice-ci \
         --role-session-name "myservice-${CIRCLE_BUILD_NUM}" \
         --web-identity-token "$CIRCLE_OIDC_TOKEN" \
         --duration-seconds 3600 \
@@ -165,7 +162,7 @@ The role itself is harmless to leave deployed; it can only be assumed by your sp
 data "aws_iam_policy_document" "lambda_deploy" {
   statement {
     actions   = ["lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration", "lambda:GetFunction", "lambda:PublishVersion"]
-    resources = ["arn:aws:lambda:eu-central-1:${var.account_id}:function:${var.service}-*"]
+    resources = ["arn:aws:lambda:<region>:${var.account_id}:function:${var.service}-*"]
   }
   statement {
     actions   = ["s3:PutObject", "s3:GetObject"]
@@ -208,8 +205,6 @@ resource "aws_iam_role_policy_attachment" "power_user" {
 }
 ```
 
-This matches the pattern `dst-common-ci` uses today.
-
 ---
 
 ## Variables
@@ -246,7 +241,7 @@ This matches the pattern `dst-common-ci` uses today.
 - Trust policy mismatch. Decode the OIDC token from CircleCI (paste `$CIRCLE_OIDC_TOKEN` into jwt.io) and check the `sub` claim matches your `branch_filter` and `circleci_project_id`. Common cause: feature-branch test against a `branch_filter` set to `refs/heads/main`.
 
 **`InvalidIdentityToken: No OpenIDConnect provider found in your account for...`**
-- The OIDC provider isn't registered in the target account. Check `aws iam list-open-id-connect-providers`. If empty, MI-2452 hasn't been done for that account.
+- The OIDC provider isn't registered in the target account. Check `aws iam list-open-id-connect-providers`. If empty, bootstrap it first.
 
 **`The security token included in the request is invalid` after `aws-cli/setup`**
 - Stale creds from a previous job step. Make sure `aws-cli/setup` runs *before* any AWS-touching step, and that you haven't manually `export`ed conflicting `AWS_*` vars in an earlier step.
@@ -254,10 +249,6 @@ This matches the pattern `dst-common-ci` uses today.
 **Build succeeds but `aws sts get-caller-identity` shows the wrong account**
 - Multiple `aws-cli/setup` calls / multiple roles in the same job. The last `setup` wins.
 
-## Related
+## License
 
-- **MI-2451** — parent epic: migrate CI/CD to OIDC + scoped IAM roles
-- **MI-2452** — bootstrap OIDC providers (peekd ✅ / dst ✅ / kwh ❌)
-- **MI-2453** — this module
-- [`dst-common`](https://github.com/atript/dst-common) — reference implementation; `ci_role.tf` is the un-modularized version of this module
-- [CircleCI OIDC docs](https://circleci.com/docs/openid-connect-tokens/)
+MIT.
