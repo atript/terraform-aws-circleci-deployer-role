@@ -86,6 +86,26 @@ module "circleci_deployer" {
 
 Apply once with **human creds** (`AWS_PROFILE=<your-profile> terraform apply`) — this is the bootstrap. After this, CI assumes the role and runs all subsequent applies itself.
 
+#### Migrating an existing hand-rolled OIDC role
+
+If your project already has a trust policy + `aws_iam_role` written by hand (common pattern: a `data "aws_iam_policy_document" "ci_trust"` + `aws_iam_role` resource pair), **don't just delete the old code and apply** — Terraform will plan to destroy the role and create a new one with the same name. The destroy fails mid-apply on the `EntityAlreadyExists` collision (or worse, succeeds and leaves your CI broken until the create completes).
+
+Instead:
+
+1. Replace the hand-rolled HCL with a module call. Keep `role_name` identical so the AWS-level name doesn't change.
+2. Move the existing role into the module's address **before** planning:
+   ```bash
+   terraform state mv \
+     'aws_iam_role.<old_name>[0]' \
+     'module.<module_alias>[0].aws_iam_role.deployer'
+   ```
+   Drop the `[0]` indices if your resources don't use `count`.
+3. Run `terraform plan`. Expected outcome: `0 to add, 1 to change, 0 to destroy`. The single in-place change is `assume_role_policy` updating from your hand-rolled `:sub` pattern to the module's stricter `org/<org>/project/<project>/user/*` (or `…/user/*/vcs-ref/<branch>` if `branch_filter` is set). Both match real CircleCI tokens, so no behavior change.
+4. **If the plan shows any `destroy` actions on the role, stop.** Either state mv didn't run, or the target address is wrong. Fix before applying.
+5. Apply with human creds.
+
+**Inline policies and managed-policy attachments** on the old role (`aws_iam_role_policy.*`, `aws_iam_role_policy_attachment.*`) should stay as separate resources — leave them in your HCL and just re-point their `role` reference at `module.<alias>[0].role_name`. Folding their content into the module's `permissions_policy` would rename the inline policy mid-apply and briefly drop those permissions; for roles that manage their own IAM, that can deadlock the apply.
+
 ### Step 2 — Update `.circleci/config.yml`
 
 Use the `circleci/aws-cli` orb's `setup` step. It reads `$CIRCLE_OIDC_TOKEN` (CircleCI injects it automatically), calls `sts:AssumeRoleWithWebIdentity` for you, and exports the resulting short-lived creds into the job's environment.
