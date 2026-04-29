@@ -25,8 +25,9 @@ variable "branch_filter" {
 }
 
 variable "permissions_policy" {
-  description = "JSON IAM policy document attached inline as the role's permissions. Typically built with `data \"aws_iam_policy_document\"` and passed as `.json`."
+  description = "Optional. JSON IAM policy document attached inline as the role's permissions. If null, no inline policy is created — useful when permissions are attached separately (managed-policy attachment, or multiple inline policies managed outside the module)."
   type        = string
+  default     = null
 }
 
 variable "max_session_duration" {

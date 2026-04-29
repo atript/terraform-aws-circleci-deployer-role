@@ -199,15 +199,7 @@ If you're cutting over a project whose CI today runs `terraform apply` with broa
 
 ```hcl
 module "circleci_deployer" {
-  # ...
-  permissions_policy = data.aws_iam_policy_document.minimal.json   # required by the module
-}
-
-data "aws_iam_policy_document" "minimal" {
-  statement {
-    actions   = ["sts:GetCallerIdentity"]
-    resources = ["*"]
-  }
+  # ... omit permissions_policy
 }
 
 resource "aws_iam_role_policy_attachment" "power_user" {
@@ -229,7 +221,7 @@ This matches the pattern `dst-common-ci` uses today.
 | `circleci_org_id` | string | _required_ | CircleCI organization UUID. |
 | `circleci_project_id` | string | _required_ | CircleCI project UUID. Scopes which project can assume the role. |
 | `branch_filter` | string | `null` | If set (e.g. `refs/heads/main`), only that ref can assume. Leave null to allow any branch — recommend only for non-prod. |
-| `permissions_policy` | string | _required_ | JSON IAM policy document, attached inline. |
+| `permissions_policy` | string | `null` | JSON IAM policy document, attached inline. If null, no inline policy is created — attach permissions separately (e.g. `aws_iam_role_policy_attachment` for a managed policy, or your own `aws_iam_role_policy` resource). |
 | `max_session_duration` | number | `3600` | Max session length in seconds. AWS allows up to 43200 (12h). |
 | `tags` | map(string) | `{}` | Tags applied to the role. |
 

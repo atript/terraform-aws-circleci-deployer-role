@@ -36,6 +36,8 @@ resource "aws_iam_role" "deployer" {
 }
 
 resource "aws_iam_role_policy" "deployer" {
+  count = var.permissions_policy == null ? 0 : 1
+
   name   = "${var.role_name}-permissions"
   role   = aws_iam_role.deployer.id
   policy = var.permissions_policy
